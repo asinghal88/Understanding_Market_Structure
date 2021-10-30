@@ -2,7 +2,7 @@
 title: "Market Structure SEC MIDAS Data : 5000 Securities"
 author: "Anshul Singhal"
 date: "September 2, 2021"
-output: html_document
+output: github_document
 ---
 require(data.table)
 ```{r include = FALSE}
