@@ -1,0 +1,171 @@
+---
+title: "Market Structure SEC MIDAS Data : 5000 Securities"
+author: "Anshul Singhal"
+date: "September 2, 2021"
+output: html_document
+---
+require(data.table)
+```{r include = FALSE}
+library(dplyr)
+library(data.table)
+library(zeallot)
+library(lubridate)
+library(plotly)
+library(openxlsx)
+```
+
+```{r}
+#Reading the data processed in python
+Data = fread("Processed_Data.csv")
+```
+
+```{r, echo = F}
+#Remove the first redundant column from the table and changing the Date Format
+ Modified_Data= Data %>% 
+  tibble() %>%
+  mutate(Date = parse_date_time(Date, orders = "Ymd"))%>%
+  select(-V1)%>%
+  arrange(across(c(Date,Security,Ticker)))
+```
+
+```{r}
+#Adding new features to the Data
+Modified_Data = Modified_Data %>% 
+  mutate(Trade = LitTrades + TradesForHidden,
+         TradeVol = `LitVol('000)` + `TradeVolForHidden('000)`,
+         Cancel_to_Trade = if_else(LitTrades!=0,Cancels / LitTrades,NA_real_),
+         Trade_to_Order_Volume = if_else(`OrderVol('000)`!=0,`LitVol('000)`*100/`OrderVol('000)`,NA_real_),
+         Hidden_Rate = if_else(TradesForHidden!=0,Hidden*100/ TradesForHidden,NA_real_),
+         Hidden_Volume = if_else(`TradeVolForHidden('000)`!=0,`HiddenVol('000)`*100/`TradeVolForHidden('000)`,NA_real_),
+         OddLots_Rate = if_else(TradesForOddLots!=0,OddLots*100/ TradesForOddLots,NA_real_),
+         OddLots_Volume = if_else(`TradeVolForOddLots('000)`!=0,`OddLotVol('000)`*100/ `TradeVolForOddLots('000)`,NA_real_))
+```
+
+
+```{r}
+# Function to create descriptive stats for the selected data 
+stats = function(dat,sec){
+mean_group = dat %>%
+  group_by(Date) %>%
+  filter(Security == sec)%>%
+  summarise(across(c(8:length(colnames(dat))-1), mean,na.rm = TRUE,.names = "mean_{.col}"))
+p25_group = dat %>%
+  group_by(Date) %>%
+  filter(Security == sec)%>%
+  summarise(across(c(8:length(colnames(dat))-1), quantile,probs = c(0.25),na.rm = TRUE,.names = "p25_{.col}"))
+p50_group = dat %>%
+  group_by(Date) %>%
+  filter(Security == sec)%>%
+  summarise(across(c(8:length(colnames(dat))-1), quantile,probs = c(0.5),na.rm = TRUE,.names = "p50_{.col}"))
+p75_group = dat %>%
+  group_by(Date) %>%
+  filter(Security == sec)%>%
+  summarise(across(c(8:length(colnames(dat))-1), quantile,probs = c(0.75),na.rm = TRUE,.names = "p75_{.col}"))
+std_group = dat %>%
+  group_by(Date) %>%
+  filter(Security == sec)%>%
+  summarise(across(c(8:length(colnames(dat))-1), sd,na.rm = TRUE,.names = "std_{.col}"))
+ return (list(mean_group, p25_group,p50_group, p75_group, std_group))
+}
+
+```
+
+```{r}
+#Store the descriptive stats of the Stocks and ETFs
+c(meanStock,p25Stock,p50Stock,p75Stock,stdStock) %<-% stats(Modified_Data,"Stock")
+c(meanETF,p25ETF,p50ETF,p75ETF,stdETF) %<-% stats(Modified_Data,"ETF")
+```
+
+```{r}
+#Function to randomly sample the data from 2012Q1
+sampling = function(sec){
+set.seed(123)
+sec_data = Modified_Data %>%
+  filter(Date == parse_date_time('20120103', orders = "Ymd"), Security == sec) %>%
+  sample_n(100)
+ return (sec_data)
+}
+```
+
+```{r}
+#Get 100 stocks and ETFs data from the starting
+Stock_Data = Modified_Data %>% filter(Ticker %in% sampling("Stock")$Ticker)
+ETF_Data = Modified_Data %>% filter(Ticker %in% sampling("ETF")$Ticker)
+```
+   
+```{r}
+#Store the descriptive stats of the Stocks and ETFs on the sampled Data
+c(meanStock100,p25Stock100,p50Stock100,p75Stock100,stdStock100) %<-% stats(Stock_Data,"Stock")
+c(meanETF100,p25ETF100,p50ETF100,p75ETF100,stdETF100) %<-% stats(ETF_Data,"ETF")
+Stock100 = list(meanStock100,p25Stock100,p50Stock100,p75Stock100,stdStock100)
+ETF100 = list(meanETF100,p25ETF100,p50ETF100,p75ETF100,stdETF100)
+stats = c("mean","p25","p50","p75","std")
+Stock_stats = paste(stats,"Stock100", sep='')
+ETF_stats = paste(stats,"ETF100", sep='')
+```    
+
+```{r}
+#Printing out the pdf for the Sampled stocks and ETFs
+pdf("Stock100plots.pdf")
+for(x in c(1:length(Stock_stats))){
+    for(y in c(2:length(colnames(meanStock100)))){
+      k = Stock100[x][[1]]
+      names(k) = gsub("[^A-Za-z0-9]", "", names(k))
+      col_name = colnames(k)[y]
+      new_plot =  k%>%
+        ggplot(aes(Date,k[col_name][[1]])) +
+        geom_point(na.rm=TRUE, color="purple", size=1) + 
+        ggtitle(Stock_stats[x]) +
+        theme_minimal()+
+        theme(legend.position = "none",
+            plot.title = element_text(hjust = .5)) +
+        xlab("Date") + ylab(gsub("mean_","",colnames(meanStock100[y])))
+      print(new_plot)
+    }
+}
+
+pdf("ETF100plots.pdf")
+for(x in c(1:length(ETF_stats))){
+    for(y in c(2:length(colnames(meanETF100)))){
+
+      k = ETF100[x][[1]]
+      names(k) = gsub("[^A-Za-z0-9]", "", names(k))
+      col_name = colnames(k)[y]
+      new_plot =  k%>%
+        ggplot(aes(Date,k[col_name][[1]])) +
+        geom_point(na.rm=TRUE, color="purple", size=1) + 
+        ggtitle(ETF_stats[x]) +
+        theme_minimal()+
+        theme(legend.position = "none",
+            plot.title = element_text(hjust = .5)) +
+        xlab("Date") + ylab(gsub("mean_","",colnames(meanETF100[y])))
+      print(new_plot)
+    }
+}
+dev.off()
+```
+
+```{r}
+#Some part of code adapted from Stackoverflow.Save the data to excel for the descriptive stats for 
+#the sampled data of Stocks and ETFs
+save_excel = function(sec){
+  wb = createWorkbook()
+  if(sec == "Stock"){sec_stats = Stock_stats}
+  if(sec == "ETF"){sec_stats = ETF_stats}
+  filename = if_else(sec == "Stock","Stocks100_R.xlsx","ETF100_R.xlsx")
+  for (name in sec_stats) {
+    sheet_name = name
+    df = get(name)
+    colnames(df) = gsub("mean_","",colnames(meanStock100))
+    addWorksheet(wb, sheet_name)
+    writeData(wb, sheet_name,  df)
+  }
+  if(file.exists(filename) == FALSE)
+  {
+    saveWorkbook(wb, filename)
+  }
+}
+save_excel("Stock")
+save_excel("ETF")
+```
+
